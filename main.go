@@ -4,10 +4,15 @@ import (
 	"github.com/codegangsta/cli"
 	"os"
 
+	"bufio"
 	"fmt"
 	"github.com/howeyc/fsnotify"
 	"os/exec"
 	"strings"
+)
+
+const (
+	dotGitignore string = ".gitignore"
 )
 
 type Reloader struct {
@@ -85,8 +90,29 @@ func (self *Reloader) Run() {
 
 	<-done
 
-	/* ... do stuff ... */
 	watcher.Close()
+}
+
+// utils section
+func loadGitIgnoreFileEx(path string) ([]string, error) {
+	inFile, err := os.Open(path + dotGitignore)
+	if err != nil {
+		return nil, err
+	}
+	defer inFile.Close()
+	scanner := bufio.NewScanner(inFile)
+	scanner.Split(bufio.ScanLines)
+	var ext []string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) == 0 || string(line[0]) == "#" {
+			// ignoring empty lines and comments
+			continue
+		}
+		ext = append(ext, line)
+	}
+	return ext, nil
 }
 
 func main() {
