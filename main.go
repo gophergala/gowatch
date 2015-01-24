@@ -1,13 +1,14 @@
 package main
 
 import (
-	"github.com/codegangsta/cli"
-	"os"
-
 	"bufio"
 	"fmt"
+	"github.com/codegangsta/cli"
 	"github.com/howeyc/fsnotify"
+	"log"
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -31,13 +32,14 @@ func NewReloader() *Reloader {
 		ProjectDir: "./",
 		RunCmd:     "echo alo",
 		ReloadCmd:  "",
-		Pid:        0,
+		Pid:        -1,
 	}
 }
 
 func (self *Reloader) Bump() {
 	fmt.Println("Bumping", self)
-	if self.Pid != 0 {
+
+	if self.Pid > 0 {
 		process, err := os.FindProcess(self.Pid)
 		if err != nil {
 			fmt.Println("Process already died")
@@ -61,21 +63,25 @@ func (self *Reloader) Bump() {
 func (self *Reloader) Run() {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		fmt.Println(err)
+		log.Fatal(err)
 	}
 
 	done := make(chan bool)
 	bump := make(chan bool, 2)
-
+	filter := NewFileFilter(self.ProjectDir)
 	// Process events
 	go func() {
 		for {
 			select {
 			case ev := <-watcher.Event:
-				fmt.Println("event:", ev.Name)
-				bump <- true
+				log.Println("event:", ev.Name)
+				if !filter.Ignore(ev.Name) {
+					bump <- true
+				} else {
+					log.Println("Ignoring")
+				}
 			case err := <-watcher.Error:
-				fmt.Println("error:", err)
+				log.Println("error:", err)
 			case <-bump:
 				go self.Bump()
 			}
@@ -110,9 +116,43 @@ func loadGitIgnoreFileEx(path string) ([]string, error) {
 			// ignoring empty lines and comments
 			continue
 		}
+		if string(line[0]) == "*" {
+			line = line[1:]
+		}
 		ext = append(ext, line)
 	}
 	return ext, nil
+}
+
+func createRegexpPatterns(expressins []string) []*regexp.Regexp {
+	var patterns []*regexp.Regexp
+	for _, ex := range expressins {
+		r, err := regexp.Compile(regexp.QuoteMeta(ex))
+		if err != nil {
+			continue
+		}
+		patterns = append(patterns, r)
+	}
+	return patterns
+}
+
+type FileFilter struct {
+	patterns []*regexp.Regexp
+}
+
+func (self *FileFilter) Ignore(fp string) bool {
+	for _, rgx := range self.patterns {
+		if rgx.MatchString(fp) {
+			// fmt.Println("Matched ", rgx, fp)
+			return true
+		}
+	}
+	return false
+}
+
+func NewFileFilter(path string) *FileFilter {
+	exs, _ := loadGitIgnoreFileEx(path)
+	return &FileFilter{createRegexpPatterns(exs)}
 }
 
 func main() {
@@ -131,7 +171,6 @@ func main() {
 		},
 	}
 	app.Run(os.Args)
-
 	reloader := NewReloader()
 	reloader.Run()
 }
